@@ -19,7 +19,7 @@ Construí un sistema de logging distribuido con:
 🔹 Servicios Simulados (Clientes de Logging)
     Simulá varios "servicios" que:
         Generan logs falsos (pero convincentes).
-        Envían estos logs en formato JSON a tu servidor central con método POST.
+        Envían estos logs en formato JSON a tu servidor central con método POST.p
         Incluyen en el header un token válido con el formato:
 
         Authorization: Token TU_TOKEN_AQUÍ

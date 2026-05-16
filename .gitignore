@@ -1,0 +1,12 @@
+# Entorno virtual - nunca se sube
+venv/
+
+# Base de datos - contiene datos locales
+logs.db
+
+# Archivos de Python compilados
+__pycache__/
+*.pyc
+
+# Variables de entorno (si usas en el futuro)
+.env
