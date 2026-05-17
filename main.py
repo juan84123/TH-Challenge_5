@@ -1,128 +1,80 @@
 from fastapi import FastAPI, Query, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from datetime import datetime
-from typing import Literal, Optional
 import database
 
-# Creamos la aplicacion FastAPI
+# creamos la aplicacion, es el punto de entrada de todo el servidor
 app = FastAPI()
 
-# ---------------------------------------------------------------------------
-# TOKENS VALIDOS
-# Cada token corresponde a un servicio especifico.
-# En produccion esto estaria en una base de datos o variable de entorno,
-# pero para este challenge una lista manual es suficiente.
-# ---------------------------------------------------------------------------
+# lista de tokens validos
+# la clave es el token, el valor es el nombre del servicio
+# si el token que manda el cliente no esta aca, lo rechazamos
 TOKENS_VALIDOS = {
     "svc_abc123": "payments-service",
     "svc_def456": "auth-service",
     "svc_ghi789": "orders-service"
 }
 
-# Creamos la tabla en la base de datos al arrancar el servidor
-# Si ya existe, no hace nada (CREATE TABLE IF NOT EXISTS)
+# cuando arranca el servidor, creamos la tabla en la base de datos
+# si ya existe, no hace nada
 database.crear_tabla()
 
-
-# ---------------------------------------------------------------------------
-# MODELO DE DATOS
-# Pydantic valida automaticamente que el JSON recibido
-# tenga todos estos campos con los tipos correctos.
-# Si falta un campo o el tipo es incorrecto, FastAPI devuelve 422.
-# ---------------------------------------------------------------------------
+# esto le dice a FastAPI como tiene que ser el JSON que recibe
+# si falta un campo o el tipo es incorrecto, FastAPI rechaza el request solo
 class Log(BaseModel):
-    timestamp: datetime                                          # Fecha y hora del evento
-    service: str                                                 # Nombre del servicio
-    severity: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]  # Nivel del log
-    message: str                                                 # Descripcion del evento
+    timestamp: str  # cuando ocurrio el evento
+    service: str    # que servicio lo mando
+    severity: str   # nivel del log (INFO, ERROR, etc)
+    message: str    # descripcion del evento
 
-
-# ---------------------------------------------------------------------------
-# AUTENTICACION
-# ---------------------------------------------------------------------------
-def verificar_token(authorization: Optional[str]) -> bool:
-    """
-    Verifica que el token del header Authorization sea valido.
-    
-    El header debe venir en el formato: Token svc_abc123
-    Si el header no existe, viene mal formateado, o el token
-    no esta en la lista, retorna False.
-    """
-    # Si no viene el header, rechazamos
-    if not authorization:
-        return False
-
-    # Separamos "Token svc_abc123" en ["Token", "svc_abc123"]
-    partes = authorization.split(" ")
-
-    # Verificamos que tenga exactamente dos partes y empiece con "Token"
-    if len(partes) != 2 or partes[0] != "Token":
-        return False
-
-    # Verificamos que el token exista en la lista de tokens validos
-    token = partes[1]
-    return token in TOKENS_VALIDOS
-
-
-# ---------------------------------------------------------------------------
-# ENDPOINTS
-# ---------------------------------------------------------------------------
+# endpoint de prueba para verificar que el servidor esta corriendo
 @app.get("/")
 def home():
-    """Endpoint de verificacion. Confirma que el servidor esta corriendo."""
     return {"mensaje": "Servidor de logging funcionando"}
 
-
+# endpoint para recibir logs
+# status_code=201 significa que si todo sale bien, respondemos con 201 Created
 @app.post("/logs", status_code=201)
-def recibir_log(log: Log, authorization: Optional[str] = Header(default=None)):
-    """
-    Recibe un log de un servicio y lo guarda en la base de datos.
-    
-    Requiere un token valido en el header Authorization.
-    Formato: Authorization: Token svc_abc123
-    
-    Si el token es invalido o no existe, devuelve 401.
-    Si el JSON es invalido, FastAPI devuelve 422 automaticamente.
-    Si todo esta bien, guarda el log y devuelve 201.
-    """
-    # Verificamos el token antes de procesar nada
-    if not verificar_token(authorization):
-        return JSONResponse(
-            status_code=401,
-            content={"error": "Quién sos, bro?"}
-        )
+def recibir_log(log: Log, authorization: str = Header(default="")):
+    # Header(default="") le dice a FastAPI que lea el header Authorization del request
+    # si el cliente no manda el header, el valor es un string vacio
 
-    # Guardamos el log en la base de datos
+    # verificamos que el header empiece con "Token "
+    # si no empiece asi, el formato es incorrecto y lo rechazamos
+    if not authorization.startswith("Token "):
+        return JSONResponse(status_code=401, content={"error": "Quién sos, bro?"})
+
+    # sacamos el token del header
+    # "Token svc_abc123" -> "svc_abc123"
+    token = authorization.replace("Token ", "")
+
+    # verificamos que el token exista en nuestra lista de tokens validos
+    if token not in TOKENS_VALIDOS:
+        return JSONResponse(status_code=401, content={"error": "Quién sos, bro?"})
+
+    # si llegamos aca, el token es valido
+    # guardamos el log en la base de datos
     database.insertar_log(
-        timestamp=log.timestamp.isoformat(),
+        timestamp=log.timestamp,
         service=log.service,
         severity=log.severity,
         message=log.message
     )
 
+    # respondemos que todo salio bien
     return {"mensaje": "Log recibido correctamente"}
 
-
+# endpoint para consultar logs guardados
+# todos los filtros son opcionales, si no se mandan devuelve todos los logs
 @app.get("/logs")
 def consultar_logs(
-    timestamp_start: str = Query(default=None),
-    timestamp_end: str = Query(default=None),
-    received_at_start: str = Query(default=None),
-    received_at_end: str = Query(default=None)
+    timestamp_start: str = Query(default=None),   # logs desde esta fecha
+    timestamp_end: str = Query(default=None),      # logs hasta esta fecha
+    received_at_start: str = Query(default=None),  # logs recibidos desde esta fecha
+    received_at_end: str = Query(default=None)     # logs recibidos hasta esta fecha
 ):
-    """
-    Devuelve los logs guardados con filtros opcionales por fecha.
-    
-    Filtros disponibles:
-    - timestamp_start: logs con timestamp >= este valor
-    - timestamp_end: logs con timestamp <= este valor
-    - received_at_start: logs recibidos por el servidor desde esta fecha
-    - received_at_end: logs recibidos por el servidor hasta esta fecha
-    
-    Si no se pasa ningun filtro, devuelve todos los logs.
-    Los resultados vienen ordenados del mas reciente al mas viejo.
-    """
+    # Query(default=None) le dice a FastAPI que este parametro viene de la URL
+    # por ejemplo: /logs?timestamp_start=2025-01-01
     logs = database.obtener_logs(
         timestamp_start=timestamp_start,
         timestamp_end=timestamp_end,
@@ -130,4 +82,5 @@ def consultar_logs(
         received_at_end=received_at_end
     )
 
+    # devolvemos el total de logs y la lista
     return {"total": len(logs), "logs": logs}
